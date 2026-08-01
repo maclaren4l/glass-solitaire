@@ -45,6 +45,28 @@
   height: var(--card-h);
 }
 
+/* The stock's empty-well glyph was a broken ring, which reads as a letter C rather than
+   "click to recycle". Mask a real circular-arrow path instead, so it still takes its colour
+   from the theme's label token. */
+.pile--stock:not(:has(.card))::after {
+  left: 50%;
+  top: 50%;
+  width: 46%;
+  height: 46%;
+  transform: translate(-50%, -50%);
+  border: 0;
+  border-radius: 0;
+  opacity: 0.5;
+  background: var(--label-tertiary);
+  --recycle: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='none' stroke='%23000' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round' d='M20.5 12a8.5 8.5 0 1 1-2.6-6.1'/%3E%3Cpath fill='%23000' d='M21.4 2.6v6.2h-6.2z'/%3E%3C/svg%3E");
+  -webkit-mask-image: var(--recycle);
+  mask-image: var(--recycle);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+}
+
 /* --------------------------------------------------------------- toolbar */
 
 .toolbar__group--stats {
