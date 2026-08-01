@@ -1,0 +1,365 @@
+/* ---------------------------------------------------------------------------
+   app.css — composition layer.
+
+   css/glass.css owns the design-system primitives. This file only assembles them
+   into the specific screens of this game: the toolbar arrangement, the contents of
+   the menu and win sheets, the toast, and the drag layer. Nothing here should be
+   reusable enough to belong in the design system.
+   --------------------------------------------------------------------------- */
+
+/* A `display` declaration in a class rule outranks the UA's `[hidden] { display: none }`,
+   which silently un-hides buttons and flex containers. Restore the intent globally. */
+[hidden] {
+  display: none !important;
+}
+
+/* Inline icons must be sized by the button, never by the SVG's intrinsic box. */
+.icon {
+  width: 1.05em;
+  height: 1.05em;
+  flex: none;
+  display: block;
+}
+
+/* App-level tuning of the design-system card metrics. The tokens are sized for the
+   styleguide's isolated cards; a real board also has to respect viewport *height*, and
+   should not stretch a seven-column tableau across an ultrawide monitor. */
+:root {
+  --card-w: clamp(56px, min(8.4vw, 12.2vh), 122px);
+}
+
+.board {
+  width: 100%;
+  max-width: min(1240px, 100%);
+  margin-inline: auto;
+  /* content-box + padding pushed the board past the viewport and produced a horizontal
+     scrollbar; the max-width has to include its own padding. */
+  box-sizing: border-box;
+}
+
+/* A tableau pile stretches to the full height of the grid row so that dropping onto the
+   bottom of a long column still hits it. The empty-column *well*, though, must stay a
+   single card tall — otherwise an empty column paints a full-height slab. */
+.pile--tableau:not(:has(.card))::before {
+  bottom: auto;
+  height: var(--card-h);
+}
+
+/* --------------------------------------------------------------- toolbar */
+
+.toolbar__group--stats {
+  gap: var(--space-2);
+}
+
+.toolbar__group--end {
+  gap: var(--space-2);
+  flex-wrap: nowrap;
+}
+
+.glass-button__label {
+  white-space: nowrap;
+}
+
+.glass-button--quiet {
+  background: transparent;
+  box-shadow: none;
+  color: var(--label-secondary);
+  font-size: var(--text-sm);
+}
+
+.glass-button--quiet:hover {
+  color: var(--label);
+}
+
+/* The stock readout sits in the empty span between the waste and the foundations —
+   the one place on the board that is always free, and next to what it describes. */
+.board__stockmeta {
+  position: absolute;
+  left: 50%;
+  top: calc(var(--space-6) + var(--card-h) / 2);
+  transform: translate(-50%, -50%);
+  margin: 0;
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--label-secondary);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* --------------------------------------------------------------- sheets */
+
+.glass-sheet {
+  max-height: min(86vh, 760px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  text-align: start;
+  padding-top: var(--space-7);
+}
+
+.glass-sheet__close {
+  position: absolute;
+  inset-block-start: var(--space-4);
+  inset-inline-end: var(--space-4);
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+  color: var(--label-secondary);
+  background: var(--glass-fill-weak);
+  box-shadow: inset 0 0 0 1px var(--glass-border);
+  transition: color var(--dur-fast) var(--ease-spring), background var(--dur-fast) var(--ease-spring);
+}
+
+.glass-sheet__close:hover {
+  color: var(--label);
+  background: var(--glass-fill);
+}
+
+.glass-sheet__close .icon {
+  width: 15px;
+  height: 15px;
+}
+
+.glass-sheet__title {
+  margin: 0 0 var(--space-5);
+  font-size: var(--text-xl);
+  font-weight: var(--weight-bold);
+  letter-spacing: var(--tracking-tighter);
+  color: var(--label);
+}
+
+.glass-sheet__subtitle {
+  margin: var(--space-7) 0 var(--space-3);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--label-tertiary);
+}
+
+.glass-sheet__body {
+  margin: 0 0 var(--space-6);
+  color: var(--label-secondary);
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--separator, rgba(128, 128, 128, 0.22));
+}
+
+.settings-row:last-of-type {
+  border-bottom: 0;
+}
+
+.settings-row__label {
+  font-size: var(--text-base);
+  color: var(--label);
+  white-space: nowrap;
+}
+
+.sheet-actions {
+  display: flex;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+}
+
+.sheet-actions__wide {
+  flex: 1 1 0;
+  justify-content: center;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
+}
+
+.stats-grid dt {
+  font-size: var(--text-sm);
+  color: var(--label-secondary);
+}
+
+.stats-grid dd {
+  margin: 0;
+  text-align: end;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+  color: var(--label);
+}
+
+.keys {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: var(--space-2) var(--space-4);
+  margin: 0 0 var(--space-2);
+  padding: 0;
+  list-style: none;
+  font-size: var(--text-sm);
+  color: var(--label-secondary);
+}
+
+.keys kbd {
+  display: inline-block;
+  min-width: 1.6em;
+  margin-inline-end: 0.4em;
+  padding: 1px 6px;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 0.82em;
+  font-weight: var(--weight-semibold);
+  text-align: center;
+  color: var(--label);
+  background: var(--glass-fill-weak);
+  box-shadow: inset 0 0 0 1px var(--glass-border);
+}
+
+/* --------------------------------------------------------------- win sheet */
+
+.glass-sheet--win {
+  text-align: center;
+  max-width: min(360px, 90vw);
+}
+
+.glass-sheet--win .glass-sheet__title {
+  margin-bottom: var(--space-2);
+}
+
+.win-mark {
+  display: grid;
+  place-items: center;
+  width: 66px;
+  height: 66px;
+  margin: 0 auto var(--space-5);
+  border-radius: 50%;
+  color: #fff;
+  background: linear-gradient(180deg, var(--accent, #0A84FF), color-mix(in srgb, var(--accent, #0A84FF) 74%, #000));
+  box-shadow: inset 0 1.5px 0 0 rgba(255, 255, 255, 0.4), var(--shadow-2);
+}
+
+.win-mark svg {
+  width: 32px;
+  height: 32px;
+}
+
+/* --------------------------------------------------------------- toast */
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: clamp(20px, 5vh, 46px);
+  z-index: var(--z-sheet, 90);
+  padding: var(--space-3) var(--space-6);
+  border-radius: 999px;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--label);
+  background: var(--glass-fill-strong);
+  -webkit-backdrop-filter: blur(var(--glass-blur-2)) saturate(var(--glass-sat));
+  backdrop-filter: blur(var(--glass-blur-2)) saturate(var(--glass-sat));
+  box-shadow: inset 0 1px 0 0 var(--glass-specular-hi), inset 0 0 0 1px var(--glass-border), var(--shadow-2);
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 8px);
+  transition: opacity var(--dur-base) var(--ease-spring), transform var(--dur-base) var(--ease-spring);
+}
+
+.toast.is-visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+/* --------------------------------------------------------------- drag layer */
+
+.drag-group {
+  position: fixed;
+  z-index: 2;
+}
+
+.drag-group .card {
+  transition: none;
+}
+
+.card--flying {
+  pointer-events: none;
+  will-change: transform;
+}
+
+/* --------------------------------------------------------------- responsive */
+
+@media (max-width: 1080px) {
+  .toolbar__title {
+    display: none;
+  }
+}
+
+@media (max-width: 900px) {
+  .glass-button__label {
+    display: none;
+  }
+  .glass-button {
+    padding-inline: var(--space-3);
+  }
+  .icon {
+    width: 1.15rem;
+    height: 1.15rem;
+  }
+}
+
+@media (max-width: 700px) {
+  /* Below this width the binding constraint is that seven columns plus their gaps must fit
+     across the viewport, so the card size is solved for rather than clamped. The paddings
+     and gaps are stated in explicit pixels here so that arithmetic stays exact. */
+  :root {
+    --card-w: calc((100vw - 16px - 30px) / 7);
+    --stack-gap-up: 15px;
+    --stack-gap-down: 7px;
+  }
+  .app {
+    padding: 8px;
+    gap: 8px;
+  }
+  .toolbar {
+    flex-wrap: wrap;
+    justify-content: center;
+    row-gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+  }
+  .toolbar__group--stats {
+    order: 3;
+    width: 100%;
+    justify-content: center;
+  }
+  .board {
+    padding: 4px 0 22px;
+  }
+  .board__top,
+  .board__tableau {
+    gap: 5px;
+  }
+  /* The top row fills the width on phones, so there is no gap left to sit in. */
+  .board__stockmeta {
+    top: auto;
+    bottom: 0;
+    transform: translateX(-50%);
+  }
+  .sheet-actions {
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 420px) {
+  .toolbar__group--stats .glass-stat {
+    min-width: 48px;
+    padding-inline: var(--space-3);
+  }
+}

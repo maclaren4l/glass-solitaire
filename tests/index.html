@@ -1,0 +1,668 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>engine tests</title>
+<style>
+  body { font: 13px/1.4 ui-monospace, Menlo, Consolas, monospace; background:#111; color:#ddd; padding:16px; }
+  .pass { color:#7ee787; }
+  .fail { color:#ff7b72; }
+  .name { color:#9cdcfe; }
+  #summary { font-size:16px; margin:12px 0; font-weight:bold; }
+  li { margin: 2px 0; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<h1>Glass Solitaire — engine test suite</h1>
+<div id="summary">running…</div>
+<ul id="results"></ul>
+
+<script type="module">
+import { makeRng, createDeck, isRed, SUITS, RANKS } from '../js/engine/deck.js';
+import { canStackTableau, canStackFoundation, isValidRun } from '../js/engine/rules.js';
+import {
+  newGame, legalMoves, applyMove, undo, findHint,
+  autoCompleteMoves, canAutoComplete, isWon, serialize, deserialize,
+} from '../js/engine/game.js';
+
+// ---------------------------------------------------------------------------
+// tiny test framework
+// ---------------------------------------------------------------------------
+
+const results = [];
+
+function test(name, fn) {
+  try {
+    fn();
+    results.push({ name, pass: true });
+  } catch (e) {
+    results.push({ name, pass: false, error: (e && e.message) ? e.message : String(e) });
+  }
+}
+
+function assert(cond, msg) {
+  if (!cond) throw new Error(msg || 'assertion failed');
+}
+
+function assertEqual(a, b, msg) {
+  const as = JSON.stringify(a);
+  const bs = JSON.stringify(b);
+  if (as !== bs) throw new Error(`${msg || 'not equal'} :: expected ${bs} but got ${as}`);
+}
+
+// ---------------------------------------------------------------------------
+// fixtures
+// ---------------------------------------------------------------------------
+
+function C(suit, rank, faceUp) {
+  return { id: `${suit}${rank}`, rank, suit, faceUp: !!faceUp };
+}
+
+function makeState(overrides) {
+  const base = {
+    stock: [],
+    waste: [],
+    foundations: { S: [], H: [], D: [], C: [] },
+    tableau: [[], [], [], [], [], [], []],
+    drawCount: 1,
+    moves: 0,
+    score: 0,
+    elapsedMs: 0,
+    history: [],
+    passes: 0,
+    won: false,
+    seed: 1,
+  };
+  return Object.assign(base, overrides);
+}
+
+function ids(cards) {
+  return cards.map((c) => c.id);
+}
+
+// ---------------------------------------------------------------------------
+// deck.js
+// ---------------------------------------------------------------------------
+
+test('makeRng is deterministic for a given seed', () => {
+  const r1 = makeRng(42);
+  const r2 = makeRng(42);
+  const seq1 = [r1(), r1(), r1(), r1(), r1()];
+  const seq2 = [r2(), r2(), r2(), r2(), r2()];
+  assertEqual(seq1, seq2, 'same seed should give same sequence');
+  assert(seq1.every((n) => n >= 0 && n < 1), 'values must be in [0,1)');
+});
+
+test('makeRng differs across seeds', () => {
+  const a = makeRng(1)();
+  const b = makeRng(2)();
+  assert(a !== b, 'different seeds should (almost certainly) differ');
+});
+
+test('createDeck(seed) is deterministic and produces 52 unique cards', () => {
+  const d1 = createDeck(7);
+  const d2 = createDeck(7);
+  assertEqual(ids(d1), ids(d2), 'same seed must give same shuffle order');
+  assert(d1.length === 52, 'deck has 52 cards');
+  const uniq = new Set(ids(d1));
+  assert(uniq.size === 52, 'all card ids unique');
+  assert(d1.every((c) => c.faceUp === false), 'all cards start face down');
+  for (const suit of SUITS) {
+    for (const rank of RANKS) {
+      assert(uniq.has(`${suit}${rank}`), `missing ${suit}${rank}`);
+    }
+  }
+});
+
+test('createDeck differs across seeds', () => {
+  const d1 = createDeck(1);
+  const d2 = createDeck(2);
+  assert(ids(d1).join(',') !== ids(d2).join(','), 'different seeds should shuffle differently');
+});
+
+test('isRed classifies suits correctly', () => {
+  assert(isRed('H') === true, 'hearts red');
+  assert(isRed('D') === true, 'diamonds red');
+  assert(isRed('S') === false, 'spades black');
+  assert(isRed('C') === false, 'clubs black');
+});
+
+// ---------------------------------------------------------------------------
+// rules.js
+// ---------------------------------------------------------------------------
+
+test('canStackTableau: alternating colour descending, King on empty', () => {
+  assert(canStackTableau(C('H', 8), C('S', 9)) === true, '8H on 9S valid');
+  assert(canStackTableau(C('S', 8), C('C', 9)) === false, 'same colour invalid');
+  assert(canStackTableau(C('H', 7), C('S', 9)) === false, 'wrong rank invalid');
+  assert(canStackTableau(C('S', 13), null) === true, 'King on empty column valid');
+  assert(canStackTableau(C('H', 12), null) === false, 'non-King on empty column invalid');
+});
+
+test('canStackFoundation: same suit ascending, Ace on empty', () => {
+  assert(canStackFoundation(C('S', 1), null) === true, 'Ace on empty foundation valid');
+  assert(canStackFoundation(C('S', 2), null) === false, 'non-Ace on empty foundation invalid');
+  assert(canStackFoundation(C('S', 3), C('S', 2)) === true, '3S on 2S valid');
+  assert(canStackFoundation(C('H', 3), C('S', 2)) === false, 'wrong suit invalid');
+  assert(canStackFoundation(C('S', 4), C('S', 2)) === false, 'wrong rank invalid');
+});
+
+test('isValidRun: face-up alternating descending', () => {
+  assert(isValidRun([C('H', 8, true), C('S', 7, true), C('D', 6, true)]) === true, 'valid run');
+  assert(isValidRun([C('H', 8, true), C('D', 7, true)]) === false, 'same colour run invalid');
+  assert(isValidRun([C('H', 8, true), C('S', 6, true)]) === false, 'non-sequential invalid');
+  assert(isValidRun([C('H', 8, false), C('S', 7, true)]) === false, 'face-down card invalid');
+  assert(isValidRun([]) === false, 'empty run invalid');
+});
+
+// ---------------------------------------------------------------------------
+// newGame
+// ---------------------------------------------------------------------------
+
+test('newGame deals 52 unique cards: 28 to tableau, 24 to stock', () => {
+  const s = newGame({ seed: 123, drawCount: 1 });
+  const tableauCount = s.tableau.reduce((n, col) => n + col.length, 0);
+  assert(tableauCount === 28, `expected 28 in tableau, got ${tableauCount}`);
+  assert(s.stock.length === 24, `expected 24 in stock, got ${s.stock.length}`);
+  assert(s.waste.length === 0, 'waste starts empty');
+  const all = s.tableau.flat().concat(s.stock);
+  assert(all.length === 52, 'total cards must be 52');
+  assert(new Set(ids(all)).size === 52, 'all cards unique');
+  assert(s.stock.every((c) => c.faceUp === false), 'stock all face down');
+});
+
+test('newGame: each tableau column has exactly one face-up top, rest face down', () => {
+  const s = newGame({ seed: 5, drawCount: 1 });
+  for (let i = 0; i < 7; i++) {
+    const col = s.tableau[i];
+    assert(col.length === i + 1, `column ${i} should have ${i + 1} cards, got ${col.length}`);
+    for (let j = 0; j < col.length; j++) {
+      const expected = j === col.length - 1;
+      assert(col[j].faceUp === expected, `column ${i} card ${j} faceUp mismatch`);
+    }
+  }
+});
+
+test('newGame: same seed gives identical deal', () => {
+  const a = newGame({ seed: 999, drawCount: 1 });
+  const b = newGame({ seed: 999, drawCount: 1 });
+  assertEqual(serialize(a), serialize(b), 'identical seeds must deal identically');
+});
+
+test('newGame: different seeds give different deals', () => {
+  const a = newGame({ seed: 1, drawCount: 1 });
+  const b = newGame({ seed: 2, drawCount: 1 });
+  const aOrder = a.tableau.flat().concat(a.stock).map((c) => c.id).join(',');
+  const bOrder = b.tableau.flat().concat(b.stock).map((c) => c.id).join(',');
+  assert(aOrder !== bOrder, 'different seeds should deal differently');
+});
+
+test('legalMoves never includes a flip move', () => {
+  const s = newGame({ seed: 42, drawCount: 1 });
+  const moves = legalMoves(s);
+  assert(moves.every((m) => m.type !== 'flip'), 'flip must never appear in legalMoves');
+});
+
+// ---------------------------------------------------------------------------
+// draw (draw-1 / draw-3, including short final draw)
+// ---------------------------------------------------------------------------
+
+test('draw-1: draws one card at a time, waste order correct', () => {
+  const a = C('S', 1, false), b = C('S', 2, false), c = C('S', 3, false);
+  let s = makeState({ stock: [a, b, c], drawCount: 1 });
+  let mv = legalMoves(s).find((m) => m.type === 'draw');
+  assert(mv.count === 1, 'draw-1 draws exactly 1');
+  s = applyMove(s, mv);
+  assertEqual(ids(s.waste), ['S3'], 'top of stock drawn first');
+  assert(s.waste[0].faceUp === true, 'drawn card is face up');
+  assert(s.moves === 1, 'moves incremented');
+
+  mv = legalMoves(s).find((m) => m.type === 'draw');
+  s = applyMove(s, mv);
+  assertEqual(ids(s.waste), ['S3', 'S2'], 'second draw stacks on waste');
+  assert(s.stock.length === 1, 'one card remains in stock');
+});
+
+test('draw-3: full draws then a short final draw', () => {
+  const cards = [1, 2, 3, 4, 5, 6, 7].map((r) => C('H', r, false));
+  let s = makeState({ stock: cards.slice(), drawCount: 3 });
+
+  let mv = legalMoves(s).find((m) => m.type === 'draw');
+  assert(mv.count === 3, 'first draw takes 3');
+  s = applyMove(s, mv);
+  assertEqual(ids(s.waste), ['H7', 'H6', 'H5'], 'waste order after first draw-3');
+  assert(s.stock.length === 4, 'stock has 4 left');
+
+  mv = legalMoves(s).find((m) => m.type === 'draw');
+  assert(mv.count === 3, 'second draw takes 3');
+  s = applyMove(s, mv);
+  assertEqual(ids(s.waste), ['H7', 'H6', 'H5', 'H4', 'H3', 'H2'], 'waste order after second draw-3');
+  assert(s.stock.length === 1, 'stock has 1 left');
+
+  mv = legalMoves(s).find((m) => m.type === 'draw');
+  assert(mv.count === 1, 'final draw is short: only 1 card left');
+  s = applyMove(s, mv);
+  assertEqual(ids(s.waste), ['H7', 'H6', 'H5', 'H4', 'H3', 'H2', 'H1'], 'waste order after short final draw');
+  assert(s.stock.length === 0, 'stock now empty');
+});
+
+test('draw is illegal when stock is empty; returns same state', () => {
+  const s = makeState({ stock: [], waste: [C('S', 1, true)], drawCount: 1 });
+  const result = applyMove(s, { type: 'draw', from: 'stock', to: 'waste' });
+  assert(result === s, 'illegal draw must return the exact same state object');
+});
+
+// ---------------------------------------------------------------------------
+// recycle
+// ---------------------------------------------------------------------------
+
+test('recycle is illegal unless stock empty AND waste non-empty', () => {
+  const s1 = makeState({ stock: [C('S', 1, false)], waste: [C('S', 2, true)] });
+  assert(!legalMoves(s1).some((m) => m.type === 'recycle'), 'recycle illegal: stock non-empty');
+
+  const s2 = makeState({ stock: [], waste: [] });
+  assert(!legalMoves(s2).some((m) => m.type === 'recycle'), 'recycle illegal: waste empty');
+
+  const s3 = makeState({ stock: [], waste: [C('S', 2, true)] });
+  assert(legalMoves(s3).some((m) => m.type === 'recycle'), 'recycle legal: stock empty, waste non-empty');
+});
+
+test('recycle: waste returns to stock face-down, reversed order, passes increments', () => {
+  const w1 = C('S', 1, true), w2 = C('S', 2, true), w3 = C('S', 3, true);
+  let s = makeState({ stock: [], waste: [w1, w2, w3], drawCount: 3, passes: 0 });
+  const mv = legalMoves(s).find((m) => m.type === 'recycle');
+  const s2 = applyMove(s, mv);
+  assertEqual(ids(s2.stock), ['S3', 'S2', 'S1'], 'stock is waste reversed');
+  assert(s2.stock.every((c) => c.faceUp === false), 'recycled cards are face down');
+  assert(s2.waste.length === 0, 'waste emptied');
+  assert(s2.passes === 1, 'passes incremented');
+
+  // undo restores exactly
+  const s3 = undo(s2);
+  assertEqual(serialize(s3), serialize(s), 'undo(recycle) restores prior state exactly');
+});
+
+test('recycle ordering preserves original draw order across a full pass', () => {
+  // Draw everything out with draw-1, recycle, then confirm cards come back
+  // out of the stock in the same order they were originally drawn.
+  const cards = [1, 2, 3].map((r) => C('D', r, false));
+  let s = makeState({ stock: cards.slice(), waste: [], drawCount: 1 });
+  const drawnOrder = [];
+  for (let i = 0; i < 3; i++) {
+    const mv = legalMoves(s).find((m) => m.type === 'draw');
+    s = applyMove(s, mv);
+    drawnOrder.push(s.waste[s.waste.length - 1].id);
+  }
+  assertEqual(drawnOrder, ['D3', 'D2', 'D1'], 'sanity: draw order top-of-stock first');
+
+  const recycleMv = legalMoves(s).find((m) => m.type === 'recycle');
+  s = applyMove(s, recycleMv);
+  assert(s.passes === 1, 'first pass counted');
+
+  const redrawnOrder = [];
+  for (let i = 0; i < 3; i++) {
+    const mv = legalMoves(s).find((m) => m.type === 'draw');
+    s = applyMove(s, mv);
+    redrawnOrder.push(s.waste[s.waste.length - 1].id);
+  }
+  assertEqual(redrawnOrder, drawnOrder, 'after recycle, cards redraw in the same relative order');
+});
+
+// ---------------------------------------------------------------------------
+// t2t, auto-flip, scoring
+// ---------------------------------------------------------------------------
+
+test('t2t: moves a run and auto-flips newly exposed card (+5)', () => {
+  const hidden = C('C', 9, false);
+  const h8 = C('H', 8, true);
+  const s7 = C('S', 7, true);
+  const dest = C('S', 9, true);
+  let s = makeState({
+    tableau: [[hidden, h8, s7], [dest], [], [], [], [], []],
+  });
+  const mv = legalMoves(s).find((m) => m.type === 't2t' && m.from.index === 0 && m.to.index === 1);
+  assert(mv, 'expected a legal t2t move');
+  assert(mv.count === 2, 'run of 2 cards');
+  const s2 = applyMove(s, mv);
+  assert(s2 !== s, 'applyMove must not mutate / must return new object');
+  assertEqual(ids(s2.tableau[0]), ['C9'], 'source column left with hidden card');
+  assert(s2.tableau[0][0].faceUp === true, 'exposed card auto-flips face up');
+  assertEqual(ids(s2.tableau[1]), ['S9', 'H8', 'S7'], 'destination column receives run in order');
+  assert(s2.history[s2.history.length - 1].flipped === true, 'history records flipped=true');
+  assert(s2.score === 5, 'flip awards +5');
+  assert(s2.moves === 1, 'moves incremented by 1 for the move, not the flip');
+
+  // original untouched
+  assertEqual(ids(s.tableau[0]), ['C9', 'H8', 'S7'], 'original state must be unmutated');
+  assert(s.tableau[0][0].faceUp === false, 'original hidden card still hidden');
+
+  // undo round-trip
+  const s3 = undo(s2);
+  assertEqual(serialize(s3), serialize(s), 'undo(t2t) with re-hide restores exact prior state');
+});
+
+test('t2t: moving whole column onto empty destination requires a King', () => {
+  const s = makeState({
+    tableau: [[C('H', 6, true), C('S', 5, true)], [], [], [], [], [], []],
+  });
+  const legal = legalMoves(s).filter((m) => m.type === 't2t' && m.from.index === 0);
+  assert(legal.length === 0, 'non-King run cannot move onto an empty column');
+
+  const sk = makeState({
+    tableau: [[C('S', 13, true), C('H', 12, true)], [], [], [], [], [], []],
+  });
+  const mv = legalMoves(sk).find((m) => m.type === 't2t' && m.from.index === 0 && m.to.index === 1);
+  assert(mv, 'King-led run may move onto an empty column');
+  assert(mv.count === 2, 'run includes King and the card on it');
+});
+
+test('illegal t2t is rejected and returns the same state object', () => {
+  const s = makeState({
+    tableau: [[C('S', 9, true)], [C('S', 7, true)], [], [], [], [], []],
+  });
+  const found = legalMoves(s).find((m) => m.type === 't2t' && m.from.index === 1 && m.to.index === 0);
+  assert(!found, 'sanity: this move should not be legal (same colour)');
+  const result = applyMove(s, { type: 't2t', from: { pile: 'tableau', index: 1 }, to: { pile: 'tableau', index: 0 } });
+  assert(result === s, 'illegal move must return the same state reference');
+});
+
+// ---------------------------------------------------------------------------
+// t2f
+// ---------------------------------------------------------------------------
+
+test('t2f: scores +10, auto-flips exposed card for +5 more, undo round-trips', () => {
+  const hidden = C('D', 6, false);
+  const top = C('S', 5, true);
+  let s = makeState({
+    tableau: [[hidden, top], [], [], [], [], [], []],
+    foundations: { S: [C('S', 1, true), C('S', 2, true), C('S', 3, true), C('S', 4, true)], H: [], D: [], C: [] },
+  });
+  const mv = legalMoves(s).find((m) => m.type === 't2f' && m.from.index === 0);
+  assert(mv, 'expected t2f to be legal');
+  const s2 = applyMove(s, mv);
+  assertEqual(ids(s2.foundations.S), ['S1', 'S2', 'S3', 'S4', 'S5'], 'foundation receives card');
+  assertEqual(ids(s2.tableau[0]), ['D6'], 'source column shrinks');
+  assert(s2.tableau[0][0].faceUp === true, 'exposed card flips face up');
+  assert(s2.score === 15, 't2f (+10) + flip (+5) = 15');
+  assert(s2.won === false, 'not won yet');
+
+  const s3 = undo(s2);
+  assertEqual(serialize(s3), serialize(s), 'undo(t2f) restores exact prior state');
+});
+
+test('t2f is illegal onto foundation out of sequence; same state returned', () => {
+  const s = makeState({
+    tableau: [[C('S', 5, true)], [], [], [], [], [], []],
+    foundations: { S: [], H: [], D: [], C: [] },
+  });
+  const result = applyMove(s, { type: 't2f', from: { pile: 'tableau', index: 0 }, to: { pile: 'foundation', suit: 'S' } });
+  assert(result === s, '5S cannot go to an empty foundation; illegal move rejected');
+});
+
+// ---------------------------------------------------------------------------
+// w2t / w2f / f2t
+// ---------------------------------------------------------------------------
+
+test('w2t: scores +5, undo round-trips', () => {
+  const card = C('H', 10, true);
+  let s = makeState({ waste: [card], tableau: [[C('S', 11, true)], [], [], [], [], [], []] });
+  const mv = legalMoves(s).find((m) => m.type === 'w2t');
+  assert(mv, 'w2t should be legal');
+  const s2 = applyMove(s, mv);
+  assertEqual(ids(s2.tableau[0]), ['S11', 'H10'], 'card moved to tableau');
+  assert(s2.waste.length === 0, 'waste emptied');
+  assert(s2.score === 5, 'w2t awards +5');
+  const s3 = undo(s2);
+  assertEqual(serialize(s3), serialize(s), 'undo(w2t) restores exact prior state');
+});
+
+test('w2f: scores +10, undo round-trips, and isWon fires when foundations complete', () => {
+  const card = C('C', 1, true);
+  let s = makeState({ waste: [card] });
+  const mv = legalMoves(s).find((m) => m.type === 'w2f');
+  assert(mv, 'w2f should be legal (Ace onto empty foundation)');
+  const s2 = applyMove(s, mv);
+  assertEqual(ids(s2.foundations.C), ['C1'], 'foundation receives ace');
+  assert(s2.score === 10, 'w2f awards +10');
+  const s3 = undo(s2);
+  assertEqual(serialize(s3), serialize(s), 'undo(w2f) restores exact prior state');
+});
+
+test('f2t: scores -15, undo round-trips, and clamps score at 0', () => {
+  const s5 = C('S', 2, true);
+  let s = makeState({
+    foundations: { S: [C('S', 1, true), s5], H: [], D: [], C: [] },
+    tableau: [[C('H', 3, true)], [], [], [], [], [], []],
+    score: 20,
+  });
+  const mv = legalMoves(s).find((m) => m.type === 'f2t');
+  assert(mv, 'f2t should be legal');
+  const s2 = applyMove(s, mv);
+  assertEqual(ids(s2.tableau[0]), ['H3', 'S2'], 'card moved to tableau');
+  assertEqual(ids(s2.foundations.S), ['S1'], 'foundation loses top card');
+  assert(s2.score === 5, 'f2t applies -15 (20 -> 5)');
+  const s3 = undo(s2);
+  assertEqual(serialize(s3), serialize(s), 'undo(f2t) restores exact prior state');
+
+  // clamp case
+  let low = makeState({
+    foundations: { S: [C('S', 1, true), C('S', 2, true)], H: [], D: [], C: [] },
+    tableau: [[C('H', 3, true)], [], [], [], [], [], []],
+    score: 5,
+  });
+  const mv2 = legalMoves(low).find((m) => m.type === 'f2t');
+  const low2 = applyMove(low, mv2);
+  assert(low2.score === 0, 'score clamps at 0 (5 - 15 -> 0)');
+  assert(low2.history[0].scoreDelta === -5, 'recorded scoreDelta is the actually-applied delta');
+  const low3 = undo(low2);
+  assert(low3.score === 5, 'undo reverses the applied (clamped) delta exactly, restoring 5');
+});
+
+// ---------------------------------------------------------------------------
+// scoring: recycle -100 (draw-1 only) and 0-clamp
+// ---------------------------------------------------------------------------
+
+test('recycle scores -100 in draw-1, 0 in draw-3', () => {
+  const s1 = makeState({ stock: [], waste: [C('S', 1, true)], drawCount: 1, score: 150 });
+  const mv1 = legalMoves(s1).find((m) => m.type === 'recycle');
+  const r1 = applyMove(s1, mv1);
+  assert(r1.score === 50, 'draw-1 recycle costs 100 points (150 -> 50)');
+
+  const s3 = makeState({ stock: [], waste: [C('S', 1, true)], drawCount: 3, score: 50 });
+  const mv3 = legalMoves(s3).find((m) => m.type === 'recycle');
+  const r3 = applyMove(s3, mv3);
+  assert(r3.score === 50, 'draw-3 recycle is free (no score change)');
+});
+
+test('recycle score clamps at 0 and undo restores exactly', () => {
+  const s = makeState({ stock: [], waste: [C('S', 1, true)], drawCount: 1, score: 30 });
+  const mv = legalMoves(s).find((m) => m.type === 'recycle');
+  const s2 = applyMove(s, mv);
+  assert(s2.score === 0, 'score clamps at 0 (30 - 100 -> 0)');
+  assert(s2.history[0].scoreDelta === -30, 'applied delta reflects the clamp');
+  const s3 = undo(s2);
+  assert(s3.score === 30, 'undo restores the exact pre-clamp score');
+});
+
+// ---------------------------------------------------------------------------
+// undo: no-op on empty history
+// ---------------------------------------------------------------------------
+
+test('undo is a no-op when history is empty', () => {
+  const s = newGame({ seed: 1, drawCount: 1 });
+  const s2 = undo(s);
+  assert(s2 === s, 'undo with empty history returns the same state');
+});
+
+// ---------------------------------------------------------------------------
+// findHint
+// ---------------------------------------------------------------------------
+
+test('findHint never returns an immediate reversal of the last move', () => {
+  const hidden = C('C', 9, false);
+  const h8 = C('H', 8, true);
+  const s7 = C('S', 7, true);
+  const dest = C('S', 9, true);
+  let s = makeState({ tableau: [[hidden, h8, s7], [dest], [], [], [], [], []] });
+  const mv = legalMoves(s).find((m) => m.type === 't2t' && m.from.index === 0 && m.to.index === 1);
+  const s2 = applyMove(s, mv);
+
+  // In s2, the only legal tableau move is moving [H8,S7] straight back — must be filtered out.
+  const reversalExists = legalMoves(s2).some(
+    (m) => m.type === 't2t' && m.from.index === 1 && m.to.index === 0
+  );
+  assert(reversalExists, 'sanity: reversal move must actually be legal here');
+  const hint = findHint(s2);
+  assert(hint === null, 'findHint must return null when the only move is a reversal');
+});
+
+test('findHint priority: exposing a face-down card beats emptying-a-column-for-a-King beats plain t2f', () => {
+  const s = makeState({
+    tableau: [
+      [C('H', 6, true), C('S', 5, true)],   // col0: full valid run, moving it empties the column
+      [C('C', 7, true)],                     // col1: destination for col0's run
+      [C('C', 4, false), C('D', 2, true)],   // col2: moving D2 exposes a face-down card
+      [], [], [], [],
+    ],
+    foundations: { S: [], H: [], D: [C('D', 1, true)], C: [] },
+    waste: [C('D', 13, true)], // an available King
+  });
+  const hint = findHint(s);
+  assert(hint, 'expected a hint');
+  assert(hint.type === 't2f' && hint.from.index === 2, 'must prefer exposing the face-down card');
+});
+
+test('findHint priority: emptying a column while holding a King beats a plain t2f', () => {
+  const s = makeState({
+    tableau: [
+      [C('H', 6, true), C('S', 5, true)], // col0: emptied by moving the run
+      [C('C', 7, true)],                  // col1: destination
+      [C('H', 2, true)],                  // col3-ish: plain t2f candidate
+      [], [], [], [],
+    ],
+    foundations: { S: [], H: [C('H', 1, true)], D: [], C: [] },
+    waste: [C('D', 13, true)], // available King
+  });
+  const hint = findHint(s);
+  assert(hint, 'expected a hint');
+  assert(hint.type === 't2t' && hint.from.index === 0 && hint.to.index === 1,
+    'must prefer emptying the column ahead of the plain t2f');
+});
+
+test('findHint never suggests foundation -> tableau', () => {
+  const s = makeState({
+    foundations: { S: [C('S', 1, true), C('S', 2, true), C('S', 3, true)], H: [], D: [], C: [] },
+    tableau: [[C('H', 4, true)], [], [], [], [], [], []],
+  });
+  const onlyLegalIsF2t = legalMoves(s).every((m) => m.type === 'f2t');
+  assert(onlyLegalIsF2t, 'sanity: only f2t should be legal in this position');
+  assert(findHint(s) === null, 'findHint must not suggest foundation -> tableau, even as a last resort');
+});
+
+// ---------------------------------------------------------------------------
+// autoCompleteMoves / canAutoComplete
+// ---------------------------------------------------------------------------
+
+test('canAutoComplete is false while face-down tableau cards remain', () => {
+  const s = makeState({ tableau: [[C('D', 5, false)], [], [], [], [], [], []] });
+  assert(canAutoComplete(s) === false, 'face-down card blocks auto-complete');
+  assertEqual(autoCompleteMoves(s), [], 'autoCompleteMoves is empty when not auto-completable');
+});
+
+test('autoCompleteMoves finishes a trivially near-complete game', () => {
+  const S = [];
+  for (let r = 1; r <= 12; r++) S.push(C('S', r, true));
+  const full = (suit) => [1,2,3,4,5,6,7,8,9,10,11,12,13].map((r) => C(suit, r, true));
+  const s = makeState({
+    foundations: { S, H: full('H'), D: full('D'), C: full('C') },
+    tableau: [[C('S', 13, true)], [], [], [], [], [], []],
+  });
+  assert(canAutoComplete(s) === true, 'no hidden cards, fully finishable');
+  const moves = autoCompleteMoves(s);
+  assert(moves.length === 1, 'exactly one move needed');
+  assert(moves[0].type === 't2f' && moves[0].cards[0].id === 'S13', 'moves the last King home');
+
+  let finalState = s;
+  for (const m of moves) finalState = applyMove(finalState, m);
+  assert(isWon(finalState) === true, 'game is won after applying the moves');
+});
+
+test('autoCompleteMoves resolves stock/waste ordering via draws', () => {
+  const S = [];
+  for (let r = 1; r <= 11; r++) S.push(C('S', r, true));
+  const full = (suit) => [1,2,3,4,5,6,7,8,9,10,11,12,13].map((r) => C(suit, r, true));
+  const s = makeState({
+    foundations: { S, H: full('H'), D: full('D'), C: full('C') },
+    tableau: [[], [], [], [], [], [], []],
+    stock: [C('S', 12, false), C('S', 13, false)], // S13 on top, but S12 must go first
+    drawCount: 1,
+  });
+  assert(canAutoComplete(s) === true, 'no hidden tableau cards; should resolve via draw cycling');
+  const moves = autoCompleteMoves(s);
+  let finalState = s;
+  for (const m of moves) finalState = applyMove(finalState, m);
+  assert(isWon(finalState) === true, 'stock cards eventually get sequenced correctly to the foundation');
+  assert(moves.length <= 10, 'should terminate quickly, not loop excessively');
+});
+
+// ---------------------------------------------------------------------------
+// isWon
+// ---------------------------------------------------------------------------
+
+test('isWon reflects foundation completeness', () => {
+  const full = (suit) => [1,2,3,4,5,6,7,8,9,10,11,12,13].map((r) => C(suit, r, true));
+  const won = makeState({ foundations: { S: full('S'), H: full('H'), D: full('D'), C: full('C') } });
+  assert(isWon(won) === true, 'all 13x4 foundations means won');
+  const notWon = makeState({ foundations: { S: full('S'), H: full('H'), D: full('D'), C: full('C').slice(0, 12) } });
+  assert(isWon(notWon) === false, 'missing one card means not won');
+});
+
+// ---------------------------------------------------------------------------
+// serialize / deserialize
+// ---------------------------------------------------------------------------
+
+test('serialize/deserialize round-trips losslessly through JSON.stringify', () => {
+  const s = newGame({ seed: 77, drawCount: 3 });
+  const json = JSON.stringify(serialize(s));
+  const restored = deserialize(JSON.parse(json));
+  assertEqual(restored, serialize(s), 'round trip preserves full state');
+
+  // mutating the restored copy must not affect the original
+  restored.tableau[6][6].faceUp = false;
+  assert(s.tableau[6][6].faceUp === true, 'deserialize must return an independent deep copy');
+});
+
+// ---------------------------------------------------------------------------
+// render results
+// ---------------------------------------------------------------------------
+
+const ul = document.getElementById('results');
+let passed = 0, failed = 0;
+for (const r of results) {
+  const li = document.createElement('li');
+  if (r.pass) {
+    passed++;
+    li.className = 'pass';
+    li.textContent = `PASS  ${r.name}`;
+  } else {
+    failed++;
+    li.className = 'fail';
+    li.textContent = `FAIL  ${r.name}\n      ${r.error}`;
+  }
+  ul.appendChild(li);
+}
+
+const resultLine = `RESULT: ${passed} passed, ${failed} failed`;
+const summary = document.getElementById('summary');
+summary.textContent = resultLine;
+summary.className = failed === 0 ? 'pass' : 'fail';
+
+const finalLi = document.createElement('li');
+finalLi.textContent = resultLine;
+finalLi.style.fontWeight = 'bold';
+ul.appendChild(finalLi);
+
+document.title = failed === 0 ? 'PASS' : 'FAIL';
+</script>
+</body>
+</html>

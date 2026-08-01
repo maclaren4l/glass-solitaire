@@ -1,0 +1,228 @@
+/*
+  board.css — page chrome and board layout: .app / .toolbar / .board grid,
+  plus the atmospheric mesh-gradient backdrop the glass refracts.
+*/
+
+html, body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font-family);
+  color: var(--label);
+  overflow: hidden;
+  position: relative;
+  background: var(--mesh-bg-base);
+}
+
+/* ============================================================
+   Mesh backdrop — several large, blurred radial gradients layered in
+   pseudo-elements so the glass above has something rich to refract.
+   ============================================================ */
+body::before,
+body::after {
+  content: "";
+  position: fixed;
+  inset: -10%;
+  z-index: 0;
+  pointer-events: none;
+}
+
+body::before {
+  background:
+    radial-gradient(38% 42% at 12% 18%, var(--mesh-stop-1) 0%, transparent 68%),
+    radial-gradient(46% 50% at 88% 14%, var(--mesh-stop-4) 0%, transparent 66%),
+    radial-gradient(50% 55% at 82% 88%, var(--mesh-stop-3) 0%, transparent 65%),
+    radial-gradient(42% 46% at 8% 86%, var(--mesh-stop-2) 0%, transparent 66%),
+    radial-gradient(60% 60% at 50% 50%, var(--mesh-stop-5) 0%, transparent 72%);
+  filter: blur(60px) saturate(140%);
+  opacity: 0.9;
+}
+
+body::after {
+  /* subtle vignette to focus the eye toward centre */
+  background: radial-gradient(120% 90% at 50% 50%, transparent 55%, rgba(0, 0, 0, 0.28) 100%);
+}
+
+@media (prefers-color-scheme: dark) {
+  body::before { opacity: 0.75; }
+}
+:root[data-theme="dark"] body::before { opacity: 0.75; }
+:root[data-theme="light"] body::before { opacity: 0.9; }
+
+/* ============================================================
+   .app — top-level flex column: toolbar, board, drag-layer
+   ============================================================ */
+.app {
+  position: relative;
+  z-index: var(--z-board);
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  padding: var(--space-5) var(--space-6) var(--space-6);
+  gap: var(--space-5);
+  box-sizing: border-box;
+}
+
+/* ============================================================
+   .toolbar
+   ============================================================ */
+.toolbar {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3) var(--space-5);
+  padding: var(--space-3) var(--space-5);
+  z-index: var(--z-toolbar);
+}
+
+.toolbar__group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.toolbar__title {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-bold);
+  letter-spacing: var(--tracking-tighter);
+  color: var(--label);
+  margin: 0;
+  padding-inline-start: var(--space-2);
+}
+
+/* ============================================================
+   .board
+   ============================================================ */
+.board {
+  position: relative;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: clamp(14px, 2.4vh, 28px);
+  min-height: 0;
+  padding: var(--space-6);
+}
+
+.board__top {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-start;
+  gap: clamp(10px, 1.6vw, 20px);
+}
+
+.board__gap {
+  flex: 1 1 auto;
+}
+
+.board__tableau {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: repeat(7, var(--card-w));
+  justify-content: space-between;
+  gap: clamp(10px, 1.6vw, 20px);
+  min-height: 0;
+}
+
+/* ============================================================
+   win overlay
+   ============================================================ */
+.win-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-sheet);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.win-overlay[hidden] {
+  display: none;
+}
+
+.win-overlay__stats {
+  display: flex;
+  gap: var(--space-4);
+  justify-content: center;
+  margin-bottom: var(--space-6);
+}
+
+/* ============================================================
+   responsive — tablet
+   ============================================================ */
+@media (max-width: 900px) {
+  .app {
+    padding: var(--space-4) var(--space-4) var(--space-5);
+    gap: var(--space-4);
+  }
+
+  .board {
+    padding: var(--space-4);
+    gap: clamp(10px, 2vh, 20px);
+  }
+
+  .toolbar__title {
+    display: none;
+  }
+}
+
+/* ============================================================
+   responsive — phone portrait: toolbar collapses to icon buttons
+   ============================================================ */
+@media (max-width: 560px) {
+  .app {
+    padding: var(--space-3) var(--space-3) var(--space-4);
+    gap: var(--space-3);
+  }
+
+  .toolbar {
+    padding: var(--space-2) var(--space-3);
+    gap: var(--space-2) var(--space-3);
+    justify-content: center;
+  }
+
+  /* icon-sized buttons: only shrink ones already marked icon-only by the
+     render layer (.glass-button--icon) — text buttons stay legible but
+     compact rather than collapsing to unlabelled squares. */
+  .toolbar .glass-button--icon {
+    min-width: 34px;
+    padding: var(--space-2);
+  }
+
+  .toolbar .glass-button:not(.glass-button--icon) {
+    padding: var(--space-2) var(--space-4);
+    font-size: var(--text-sm);
+  }
+
+  .toolbar .glass-segmented button {
+    padding: var(--space-2) var(--space-3);
+    font-size: var(--text-xs);
+  }
+
+  .toolbar .glass-stat {
+    padding: var(--space-1) var(--space-3);
+    min-width: 46px;
+  }
+
+  .board {
+    padding: var(--space-2);
+    gap: 10px;
+  }
+
+  .board__top {
+    gap: 8px;
+  }
+
+  .board__tableau {
+    gap: 6px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    scroll-behavior: auto !important;
+  }
+}
