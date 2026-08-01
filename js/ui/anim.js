@@ -82,13 +82,18 @@ export function shake(el) {
   );
 }
 
+// Must match `hint-pulse`/`hint-pile-pulse` in css/cards.css: 950ms x 3 iterations.
+const HINT_PULSE_MS = 2850;
+
 /** Pulse a card and its destination so a hint reads as "this goes there". */
 export function pulseHint(els) {
   els.filter(Boolean).forEach((el) => {
     el.classList.remove('is-hint');
     void el.offsetWidth; // restart the CSS animation
     el.classList.add('is-hint');
-    setTimeout(() => el.classList.remove('is-hint'), 1800);
+    // A touch past the animation's own runtime so the class outlives it rather than
+    // cutting a pulse off mid-glow; the animation itself settles back to steady-state.
+    setTimeout(() => el.classList.remove('is-hint'), HINT_PULSE_MS + 100);
   });
 }
 

@@ -229,14 +229,47 @@
   border-radius: var(--radius-card);
 }
 
+/* A filter: drop-shadow alone traces the card's alpha silhouette, which reads as a thin,
+   easy-to-miss sliver rather than a ring — box-shadow on an explicit border-radius (the
+   .card element itself has none by default; front/back carry it) renders a solid glow
+   instead, and the scale nudge gives the eye motion to catch even off to the side. */
 .card.is-hint {
-  animation: hint-pulse 900ms var(--ease-spring) 2;
+  position: relative;
+  z-index: calc(var(--z-drag) - 1);
+  border-radius: var(--radius-card);
+  animation: hint-pulse 950ms var(--ease-spring) 3;
 }
 
 @keyframes hint-pulse {
-  0%   { filter: drop-shadow(0 1px 1px rgba(15, 20, 30, 0.18)) drop-shadow(0 4px 10px rgba(15, 20, 30, 0.16)) drop-shadow(0 0 0 color-mix(in srgb, var(--accent) 0%, transparent)); }
-  50%  { filter: drop-shadow(0 1px 1px rgba(15, 20, 30, 0.18)) drop-shadow(0 4px 10px rgba(15, 20, 30, 0.16)) drop-shadow(0 0 16px color-mix(in srgb, var(--accent) 85%, transparent)); }
-  100% { filter: drop-shadow(0 1px 1px rgba(15, 20, 30, 0.18)) drop-shadow(0 4px 10px rgba(15, 20, 30, 0.16)) drop-shadow(0 0 0 color-mix(in srgb, var(--accent) 0%, transparent)); }
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 0%, transparent);
+  }
+  50% {
+    transform: scale(1.045);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 85%, transparent),
+      0 0 30px 8px color-mix(in srgb, var(--accent) 65%, transparent);
+  }
+}
+
+/* The hint also names a destination pile; without this, toggling .is-hint on it did
+   nothing at all — the "goes here" half of the hint was silently invisible. */
+.pile.is-hint {
+  border-radius: var(--radius-card);
+  animation: hint-pile-pulse 950ms var(--ease-spring) 3;
+}
+
+@keyframes hint-pile-pulse {
+  0%, 100% {
+    outline: 3px solid color-mix(in srgb, var(--accent) 0%, transparent);
+    outline-offset: 3px;
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 0%, transparent);
+  }
+  50% {
+    outline: 3px solid color-mix(in srgb, var(--accent) 90%, transparent);
+    outline-offset: 3px;
+    box-shadow: 0 0 28px 6px color-mix(in srgb, var(--accent) 55%, transparent);
+  }
 }
 
 .card.is-invalid {
@@ -272,6 +305,7 @@
   .card,
   .card__inner,
   .card.is-hint,
+  .pile.is-hint,
   .card.is-invalid {
     transition: none !important;
     animation: none !important;
